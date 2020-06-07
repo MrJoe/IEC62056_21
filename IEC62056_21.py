@@ -2,6 +2,7 @@ import serial
 import logging
 import time
 import re
+import sys
 from decimal import *
 from string import Template
 from collections import namedtuple
@@ -26,18 +27,18 @@ class IEC62056_21:
 	ser_is_blocking = True
 	
 	min_reaction_time=0.2
-	ctrl_StartChar = bytes('/')[0]
-	ctrl_EndChar = bytes('!')[0]
+	ctrl_StartChar = bytes('/', 'ascii')[0]
+	ctrl_EndChar   = bytes('!', 'ascii')[0]
 	
-	ctrl_EOF = bytes('\x21')[0] 
+	ctrl_EOF = bytes('\x21', 'ascii')[0]
 
-	ctrl_CTX = bytes('\x02')[0] # Start of text
-	ctrl_ETX = bytes('\x03')[0] # End of text
+	ctrl_CTX = bytes('\x02', 'ascii')[0] # Start of text
+	ctrl_ETX = bytes('\x03', 'ascii')[0] # End of text
 	
-	ctrl_ACK = bytes('\x06')[0] # Acknowledge
-	ctrl_NAK = bytes('\x15')[0] # Negative acknowledge
+	ctrl_ACK = bytes('\x06', 'ascii')[0] # Acknowledge
+	ctrl_NAK = bytes('\x15', 'ascii')[0] # Negative acknowledge
 	
-	ctrl_SOH = bytes('\x01')[0] # Start of header
+	ctrl_SOH = bytes('\x01', 'ascii')[0] # Start of header
 	
 	def __init__(self, port, 
 			baudrate=300, bytesize=serial.SEVENBITS, 
@@ -54,7 +55,7 @@ class IEC62056_21:
 	def read(self):
 		self.ser.baudrate = 300
 
-		msg_signon = bytearray("/?!\r\n")
+		msg_signon = bytearray("/?!\r\n", 'ascii')
 		
 		# 1 start bit + parity + 1 stop bit
 		expected_delay = len(msg_signon)*1.0 / (self.ser.baudrate / (self.ser.bytesize + 3));
@@ -104,9 +105,9 @@ class IEC62056_21:
 				b = self.ser.read()
 				if len(b) == 0:
 					break
-				msg.append(b)
+				msg += b
 					
-			raise InvalidMessageError("Missing start character, got: " + msg)
+			raise InvalidMessageError("Missing start character, got: " + repr(msg[0]))
 		
 		if len(msg) < 6:
 			raise InvalidMessageError("Identification message to short < 5: {0}".format(msg))
@@ -143,7 +144,6 @@ class IEC62056_21:
 		
 	def _read_data_message(self):
 		b = self.ser.read()
-		
 		if len(b) == 0:
 			raise TimeoutException
 			
@@ -152,11 +152,11 @@ class IEC62056_21:
 			raise InvalidMessageError(error)
 		
 		b = self.ser.read()
-		while b <> self.ctrl_EOF:
-                        if len(b) > 0:
-			    dataline = self._read_dataline(bytearray([b]))
-			    yield dataline
-			
+		while b[0] != self.ctrl_EOF:
+			if len(b) > 0:
+				dataline = self._read_dataline(bytearray(b))
+				yield dataline
+
 			b = self.ser.read()
 
 		b = self.ser.read()
@@ -170,7 +170,7 @@ class IEC62056_21:
 		self.logger.debug(__("BCC Value: {bcc}", bcc=b))
 			
 	def _read_dataset_structure(self, dataset):
-		result = self.dataset_regex.match(dataset)
+		result = self.dataset_regex.match(dataset.decode('ascii'))
 		if result == None:
 			error = "Unable to parse dataset structure: " + dataset
 			raise InvalidMessageError(error)
@@ -187,7 +187,7 @@ class IEC62056_21:
 		return message
 		
 	def _write_handshake(self, 	identification_message):
-		data = bytearray([0x06, '0', identification_message.baudrate_identification, ord('0'), 0x0D, 0x0A]);
+		data = bytearray([self.ctrl_ACK, ord('0'), ord(identification_message.baudrate_identification), ord('0'), 0x0D, 0x0A]);
 		self._write_blocking(data)
 		time.sleep(self.min_reaction_time)
 		self.ser.baudrate = identification_message.baudrate
@@ -196,14 +196,14 @@ class IEC62056_21:
 		if msg == None:
 			msg = bytearray()
 		
-		eom = '\r\n'
+		eom = bytes('\r\n', 'ascii')
 		m = 0
 		
 		b = self.ser.read()
 		while len(b) > 0:
-			msg.append(b)
+			msg += b
 
-			if eom[m] == b:
+			if eom[m] == b[0]:
 				m += 1
 			else:
 				m = 0
@@ -216,3 +216,12 @@ class IEC62056_21:
 			b = self.ser.read()
 		
 		return msg
+
+
+if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        exit(0)
+
+    meter = IEC62056_21(sys.argv[1])
+    for readout in meter.read():
+        print("Readout: ", readout)
